@@ -5,13 +5,31 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
+import wandb
+import os
+import argparse
 
+PATH = os.path.dirname(os.path.abspath(__file__))
 NUM_EPOCHS = 50
 SEED = 42
 BATCH_SIZE = 5000
 LEARNING_RATE = 1e-2
-PATH_MODEL = "model.pth"
-PATH_METRICS = "metrics_dict.pkl"
+PATH_MODEL = PATH + "/model_test.pth"
+PATH_METRICS = PATH + "/metrics_dict_test.pkl"
+
+# start a new wandb run to track this script
+wandb.init(
+    # set the wandb project where this run will be logged
+    project="CartPole",
+
+    # track hyperparameters and run metadata
+    config={
+    "learning_rate": LEARNING_RATE,
+    "architecture": "MLP",
+    "epochs": NUM_EPOCHS,
+    "batch_size": BATCH_SIZE
+    }
+)
 
 class MLP(nn.Module):
     def __init__(self, layer_sizes: list, activation_func: nn.modules.activation, output_activation_func: nn.modules.activation):
@@ -107,6 +125,15 @@ def train():
         mean_epoch_reward.append(np.mean(batch_rewards))
         mean_epoch_len.append(np.mean(batch_lens))
 
+        # log metrics to wandb
+        wandb.log(
+            {
+                "epoch_loss": epoch_loss[-1], 
+                "mean_epoch_reward": mean_epoch_reward[-1],
+                "mean_epoch_length": mean_epoch_len[-1]
+            }
+        )
+
     metrics_dict = {
         "epoch_loss": epoch_loss,
         "mean_epoch_reward": mean_epoch_reward,
@@ -120,6 +147,7 @@ def train():
     torch.save(model.state_dict(), PATH_MODEL)
 
     env.close()
+    wandb.finish()
 
 def evaluate():
     env = gym.make("CartPole-v1", render_mode="human")
@@ -160,9 +188,18 @@ def plot_metrics(epoch_loss, mean_epoch_reward, mean_epoch_len):
 
 
 if __name__ == "__main__":
-    task = "eval"
+
+    parser = argparse.ArgumentParser(
+        prog='Simple Policy Gradient Method.',
+        description='Solving the CartPole problem using vanilla policy gradient.'
+    )
+
+    parser.add_argument('-t', '--task', type=str, default="eval")
+    parser.add_argument('-l', '--log', type=bool, default=False)
+    args = parser.parse_args()
+    print(args)
     
-    if task == "train":
+    if args.task == "train":
         train()
-    elif task == "eval":
+    elif args.task == "eval":
         evaluate()    
