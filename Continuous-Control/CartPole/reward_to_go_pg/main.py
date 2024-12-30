@@ -5,13 +5,20 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
+import wandb
+import os
+import argparse
+from distutils.util import strtobool
 
+
+PATH = os.path.dirname(os.path.abspath(__file__))
 NUM_EPOCHS = 50
 SEED = 42
 BATCH_SIZE = 5000
 LEARNING_RATE = 1e-2
-PATH_MODEL = "model.pth"
-PATH_METRICS = "metrics_dict.pkl"
+PATH_MODEL = PATH + "/model.pth"
+PATH_METRICS = PATH + "/metrics_dict.pkl"
+
 
 class MLP(nn.Module):
     def __init__(self, layer_sizes: list, activation_func: nn.modules.activation, output_activation_func: nn.modules.activation):
@@ -50,7 +57,7 @@ def reward_to_go(trajectory_rewards: list) -> list:
     return rtg
 
 
-def train():
+def train(log: bool):
     env = gym.make("CartPole-v1")
 
     model = MLP(
@@ -68,6 +75,7 @@ def train():
     
     for _ in tqdm(range(NUM_EPOCHS)):
 
+        batch_rewards_rtg = []
         batch_rewards = []
         batch_obs = []
         batch_actions = []
@@ -91,7 +99,8 @@ def train():
                     done = True
 
             batch_lens.append(len(trajectory_rewards))
-            batch_rewards += reward_to_go(trajectory_rewards)
+            batch_rewards_rtg += reward_to_go(trajectory_rewards)
+            batch_rewards += [sum(trajectory_rewards)] * len(trajectory_rewards)
             batch_obs += trajectory_obs
             batch_actions += trajectory_actions
 
@@ -101,7 +110,7 @@ def train():
             model,
             torch.as_tensor(np.array(batch_obs), dtype=torch.float32),
             torch.as_tensor(np.array(batch_actions), dtype=torch.int32),
-            torch.as_tensor(np.array(batch_rewards), dtype=torch.float32)
+            torch.as_tensor(np.array(batch_rewards_rtg), dtype=torch.float32)
         )
 
         batch_loss.backward()
@@ -112,6 +121,17 @@ def train():
         epoch_loss.append(batch_loss.detach().numpy())
         mean_epoch_reward.append(np.mean(batch_rewards))
         mean_epoch_len.append(np.mean(batch_lens))
+
+        # log metrics to wandb
+        if log == True:
+            wandb.log(
+                {
+                    "epoch_loss": epoch_loss[-1], 
+                    "mean_epoch_reward": mean_epoch_reward[-1],
+                    "mean_epoch_length": mean_epoch_len[-1]
+                }
+            )
+
 
     metrics_dict = {
         "epoch_loss": epoch_loss,
@@ -126,6 +146,8 @@ def train():
     torch.save(model.state_dict(), PATH_MODEL)
 
     env.close()
+    if log == True:
+        wandb.finish()
 
 def evaluate():
     env = gym.make("CartPole-v1", render_mode="human")
@@ -166,9 +188,33 @@ def plot_metrics(epoch_loss, mean_epoch_reward, mean_epoch_len):
 
 
 if __name__ == "__main__":
-    task = "eval"
+
+    parser = argparse.ArgumentParser(
+        prog='Simple Policy Gradient Method.',
+        description='Solving the CartPole problem using vanilla policy gradient.'
+    )
+
+    parser.add_argument('-t', '--task', type=str, default="eval")
+    parser.add_argument('-l', '--log', type=lambda x: bool(strtobool(x)))
+    args = parser.parse_args()
+    print(args)
+
+    if args.log == True:
+        # start a new wandb run to track this script
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="CartPole",
+
+            # track hyperparameters and run metadata
+            config={
+            "learning_rate": LEARNING_RATE,
+            "architecture": "MLP",
+            "epochs": NUM_EPOCHS,
+            "batch_size": BATCH_SIZE
+            }
+        )
     
-    if task == "train":
-        train()
-    elif task == "eval":
+    if args.task == "train":
+        train(args.log)
+    elif args.task == "eval":
         evaluate()    
