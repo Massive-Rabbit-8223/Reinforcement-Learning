@@ -11,12 +11,12 @@ import argparse
 from distutils.util import strtobool
 
 PATH = os.path.dirname(os.path.abspath(__file__))
-NUM_EPOCHS = 50
+NUM_EPOCHS = 80
 SEED = 42
 BATCH_SIZE = 5000
 LEARNING_RATE = 1e-2
-PATH_MODEL = PATH + "/model_test.pth"
-PATH_METRICS = PATH + "/metrics_dict_test.pkl"
+PATH_MODEL = PATH + "/model_cuda.pth"
+PATH_METRICS = PATH + "/metrics_dict_cuda.pkl"
 
 class MLP(nn.Module):
     def __init__(self, layer_sizes: list, activation_func: nn.modules.activation, output_activation_func: nn.modules.activation):
@@ -49,14 +49,20 @@ def compute_loss(model: nn.Module, observation: torch.Tensor, action: torch.Tens
     return -(log_prob * rewards).mean()
 
 
-def train(log: bool):
+def train(log: bool, device: str):
+
+    if device == "cuda":
+        "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = "cpu"
+
     env = gym.make("CartPole-v1")
 
     model = MLP(
         layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
         activation_func=nn.Tanh,
         output_activation_func=nn.Identity
-    )
+    ).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     observation, info = env.reset(seed=SEED)
 
@@ -80,7 +86,7 @@ def train(log: bool):
 
             while not done:
                 trajectory_obs.append(observation)
-                action = get_action(model, torch.as_tensor(observation, dtype=torch.float32))
+                action = get_action(model, torch.as_tensor(observation, dtype=torch.float32).to(device))
                 observation, reward, terminated, truncated, info = env.step(action)
 
                 trajectory_actions.append(action)
@@ -98,9 +104,9 @@ def train(log: bool):
         
         batch_loss = compute_loss(
             model,
-            torch.as_tensor(np.array(batch_obs), dtype=torch.float32),
-            torch.as_tensor(np.array(batch_actions), dtype=torch.int32),
-            torch.as_tensor(np.array(batch_rewards), dtype=torch.float32)
+            torch.as_tensor(np.array(batch_obs), dtype=torch.float32).to(device),
+            torch.as_tensor(np.array(batch_actions), dtype=torch.int32).to(device),
+            torch.as_tensor(np.array(batch_rewards), dtype=torch.float32).to(device)
         )
 
         batch_loss.backward()
@@ -108,7 +114,7 @@ def train(log: bool):
         optim.zero_grad()
 
         ## gather eval metics ##
-        epoch_loss.append(batch_loss.detach().numpy())
+        epoch_loss.append(batch_loss.detach().cpu().numpy())
         mean_epoch_reward.append(np.mean(batch_rewards))
         mean_epoch_len.append(np.mean(batch_lens))
 
@@ -138,14 +144,14 @@ def train(log: bool):
     if log == True:
         wandb.finish()
 
-def evaluate():
+def evaluate(device: str):
     env = gym.make("CartPole-v1", render_mode="human")
 
     model = MLP(
         layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
         activation_func=nn.Tanh,
         output_activation_func=nn.Identity
-    )
+    ).to(device)
 
     model.load_state_dict(torch.load(PATH_MODEL, weights_only=True))
     model.eval()
@@ -158,7 +164,7 @@ def evaluate():
     observation, info = env.reset(seed=SEED)
     done = False
     while not done:
-        action = get_action(model, torch.as_tensor(observation, dtype=torch.float32))
+        action = get_action(model, torch.as_tensor(observation, dtype=torch.float32).to(device))
         observation, reward, terminated, truncated, info = env.step(action)
 
         if terminated or truncated:
@@ -185,6 +191,8 @@ if __name__ == "__main__":
 
     parser.add_argument('-t', '--task', type=str, default="eval")
     parser.add_argument('-l', '--log', type=lambda x: bool(strtobool(x)))
+    parser.add_argument('-d', '--device', type=str, default="cpu")
+    parser.add_argument('-n', '--name', type=str, default="nameless_run")
     args = parser.parse_args()
     print(args)
 
@@ -193,7 +201,7 @@ if __name__ == "__main__":
         wandb.init(
             # set the wandb project where this run will be logged
             project="CartPole",
-
+            name=args.name,
             # track hyperparameters and run metadata
             config={
             "learning_rate": LEARNING_RATE,
@@ -204,6 +212,6 @@ if __name__ == "__main__":
         )
     
     if args.task == "train":
-        train(args.log)
+        train(args.log, args.device)
     elif args.task == "eval":
-        evaluate()            
+        evaluate(args.device)            
