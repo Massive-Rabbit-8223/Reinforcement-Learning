@@ -9,4 +9,8 @@ After an environment has been solved, one can find a report inside the respected
 We focus mainly on continuous control, meaning that we are dealing with either a continuous action space, or state space or both. Therefore the folder **Continuous-Control** is the one where most is happening. The **RL-Concepts** folder contains discrete problems and their solutions, but it will probably not be as much developed as the **Continuous-Control** folder.
 
 ## Continuous-Control
-The first problem is the [Cart Pole](https://github.com/Massive-Rabbit-8223/Reinforcement-Learning/tree/main/Continuous-Control/CartPole) problem
+The first problem is the [Cart Pole](https://github.com/Massive-Rabbit-8223/Reinforcement-Learning/tree/main/Continuous-Control/CartPole) problem:
+
+![Agent-solving-CartPole][def]
+
+[def]: https://github.com/Massive-Rabbit-8223/Reinforcement-Learning/blob/main/GIFs/CartPole.gif
