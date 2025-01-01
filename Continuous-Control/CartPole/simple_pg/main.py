@@ -9,14 +9,15 @@ import wandb
 import os
 import argparse
 from distutils.util import strtobool
+from gymnasium.wrappers import RecordVideo
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 NUM_EPOCHS = 80
 SEED = 42
 BATCH_SIZE = 5000
 LEARNING_RATE = 1e-2
-PATH_MODEL = PATH + "/model_cuda.pth"
-PATH_METRICS = PATH + "/metrics_dict_cuda.pkl"
+PATH_MODEL = PATH + "/training_statistics/model_cpu.pth"
+PATH_METRICS = PATH + "/training_statistics/metrics_dict_cpu.pkl"
 
 class MLP(nn.Module):
     def __init__(self, layer_sizes: list, activation_func: nn.modules.activation, output_activation_func: nn.modules.activation):
@@ -146,7 +147,6 @@ def train(log: bool, device: str):
 
 def evaluate(device: str):
     env = gym.make("CartPole-v1", render_mode="human")
-
     model = MLP(
         layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
         activation_func=nn.Tanh,
@@ -171,6 +171,9 @@ def evaluate(device: str):
             done = True
 
 
+    record_agent(model, device)    
+
+
 def plot_metrics(epoch_loss, mean_epoch_reward, mean_epoch_len):
     plt.plot(epoch_loss, label="epoch loss")
     plt.plot(mean_epoch_reward, label="mean reward")
@@ -179,8 +182,24 @@ def plot_metrics(epoch_loss, mean_epoch_reward, mean_epoch_len):
     plt.xlabel("# Epochs")
 
     plt.legend()
+    plt.savefig(PATH+"/plots"+"/training_stats.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats.jpg")
     plt.show()
+    
 
+def record_agent(model: nn.Module, device: str):
+    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    env = RecordVideo(env, video_folder=PATH+"/videos", name_prefix="eval")
+
+    observation, info = env.reset(seed=SEED)
+    done = False
+    while not done:
+        action = get_action(model, torch.as_tensor(observation, dtype=torch.float32).to(device))
+        observation, reward, terminated, truncated, info = env.step(action)
+
+        if terminated or truncated:
+            done = True
+    env.close()
 
 if __name__ == "__main__":
 
@@ -190,7 +209,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument('-t', '--task', type=str, default="eval")
-    parser.add_argument('-l', '--log', type=lambda x: bool(strtobool(x)))
+    parser.add_argument('-l', '--log', type=lambda x: bool(strtobool(x)), default=False)
     parser.add_argument('-d', '--device', type=str, default="cpu")
     parser.add_argument('-n', '--name', type=str, default="nameless_run")
     args = parser.parse_args()
