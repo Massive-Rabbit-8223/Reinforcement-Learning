@@ -17,9 +17,9 @@ NUM_EPOCHS = 80
 SEED = 42
 BATCH_SIZE = 5000
 LEARNING_RATE = 1e-2
-PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model_cpu.pth"
-PATH_VALUE_MODEL = PATH + "/training_statistics/value_model_cpu.pth"
-PATH_METRICS = PATH + "/training_statistics/metrics_dict_cpu.pkl"
+PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model_cpu_2.pth"
+PATH_VALUE_MODEL = PATH + "/training_statistics/value_model_cpu_2.pth"
+PATH_METRICS = PATH + "/training_statistics/metrics_dict_cpu_2.pkl"
 
 
 class MLP(nn.Module):
@@ -52,8 +52,8 @@ def compute_loss_value_model(value_estimates: torch.Tensor, rewards: torch.Tenso
 
 def compute_loss_policy_model(policy_model: nn.Module, value_estimates: nn.Module, observation: torch.Tensor, action: torch.Tensor, rewards: torch.Tensor) -> torch.Tensor:
     log_prob = get_policy(policy_model, observation).log_prob(action)
-    #return -torch.matmul(log_prob, rewards) / len(rewards)
-    return -(log_prob * (rewards-value_estimates)).mean()
+    return -torch.matmul(log_prob, rewards) / BATCH_SIZE
+    #return -(log_prob * (rewards-value_estimates)).mean()
 
 def reward_to_go(trajectory_rewards: list) -> list:
     rtg = []
@@ -227,8 +227,8 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_1.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_1.jpg")
     plt.show()
     
     # plot in separate figure because of different magnitude on y-axis
@@ -236,8 +236,8 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats_2.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats_2.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_2.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_2.jpg")
     plt.show()
 
 def record_agent(model: nn.Module, device: str):
