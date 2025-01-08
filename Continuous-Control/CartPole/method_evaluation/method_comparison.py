@@ -26,6 +26,7 @@ plt.ylabel("Steps")
 plt.legend()
 plt.savefig(PATH+"/plots/"+"mean_traj_len_2.pdf")
 plt.savefig(PATH+"/plots/"+"mean_traj_len_2.jpg")
+plt.savefig(PATH+"/plots/"+"mean_traj_len_2.svg")
 plt.show()
 
 ## Plot Epoch Loss ##
@@ -41,4 +42,5 @@ plt.ylabel("Loss")
 plt.legend()
 plt.savefig(PATH+"/plots/"+"epoch_loss_2.pdf")
 plt.savefig(PATH+"/plots/"+"epoch_loss_2.jpg")
+plt.savefig(PATH+"/plots/"+"epoch_loss_2.svg")
 plt.show()
