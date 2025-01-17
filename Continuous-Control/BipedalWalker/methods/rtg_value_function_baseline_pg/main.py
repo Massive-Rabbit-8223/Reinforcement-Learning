@@ -13,13 +13,14 @@ from gymnasium.wrappers import RecordVideo
 
 
 PATH = os.path.dirname(os.path.abspath(__file__))
-NUM_EPOCHS = 80
+NUM_EPOCHS = 100
 SEED = 42
-BATCH_SIZE = 5000
+BATCH_SIZE = 10000
 LEARNING_RATE = 1e-2
-PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model_correct.pth"
-PATH_VALUE_MODEL = PATH + "/training_statistics/value_model_correct.pth"
-PATH_METRICS = PATH + "/training_statistics/metrics_dict_correct.pkl"
+PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model.pth"
+PATH_VALUE_MODEL = PATH + "/training_statistics/value_model.pth"
+PATH_METRICS = PATH + "/training_statistics/metrics_dict.pkl"
+EPSILON = 1e-3
 
 
 class MLP(nn.Module):
@@ -38,21 +39,112 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
+class MultiHeadMLP(nn.Module):
+    def __init__(self, input_size: int):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, 32)
+        self.fc2_1 = nn.Linear(32, 4)
+        self.fc2_2 = nn.Linear(32, 4)
+
+        self.x_min = torch.tensor([-3.1415927, -5., -5., -5., -3.1415927, -5., -3.1415927, -5., -0., -3.1415927, -5., -3.1415927, -5., -0., -1., -1., -1., -1., -1., -1., -1., -1., -1., -1.])
+        self.x_max = torch.tensor([3.1415927, 5., 5., 5., 3.1415927, 5., 3.1415927, 5., 5., 3.1415927, 5., 3.1415927, 5., 5., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])
+        self.u = 1
+        self.l = -1
+
+    def min_max_normalization(self, x: torch.Tensor) -> torch.Tensor:
+        return (((x-self.x_min)/(self.x_max-self.x_min))*(self.u-self.l)) + self.l
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.min_max_normalization(x)
+        x = self.fc1(x)
+        x = torch.nn.functional.tanh(x)
+
+        x_1 = self.fc2_1(x)
+        mu_hat = torch.nn.functional.tanh(x_1)
+
+        x_2 = self.fc2_2(x)
+        sigma_hat = torch.exp(x_2)
+
+        return mu_hat, sigma_hat
+    
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            torch.nn.init.xavier_uniform(m.weight)
+            m.bias.data.fill_(0.01)
+    
+class MultiHeadMLP_V2(nn.Module):
+    def __init__(self, input_size: int):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3_1 = nn.Linear(64, 32)
+        self.fc4_1 = nn.Linear(32, 4)
+        self.fc3_2 = nn.Linear(64, 32)
+        self.fc4_2 = nn.Linear(32, 4+3+2+1)
+
+        self.x_min = torch.tensor([-3.1415927, -5., -5., -5., -3.1415927, -5., -3.1415927, -5., -0., -3.1415927, -5., -3.1415927, -5., -0., -1., -1., -1., -1., -1., -1., -1., -1., -1., -1.])
+        self.x_max = torch.tensor([3.1415927, 5., 5., 5., 3.1415927, 5., 3.1415927, 5., 5., 3.1415927, 5., 3.1415927, 5., 5., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])
+        self.u = 1
+        self.l = -1
+
+    def min_max_normalization(self, x: torch.Tensor) -> torch.Tensor:
+        return (((x-self.x_min)/(self.x_max-self.x_min))*(self.u-self.l)) + self.l
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.min_max_normalization(x)
+        x = self.fc1(x)
+        x = torch.nn.functional.relu(x)
+        x = self.fc2(x)
+        x = torch.nn.functional.relu(x)
+
+        x_1 = self.fc3_1(x)
+        x_1 = torch.nn.functional.relu(x_1)
+        x_1 = self.fc4_1(x_1)
+        mu_hat = torch.nn.functional.tanh(x_1)
+
+        x_2 = self.fc3_2(x)
+        x_2 = torch.nn.functional.relu(x_2)
+        x_2 = self.fc4_2(x_2)
+        c1 = x_2[:,:4]
+        c2 = x_2[:,4:7]
+        c3 = x_2[:,7:9]
+        c4 = x_2[:,9:]
+
+        L = torch.zeros(x_2.shape[0],4,4)
+        L[:,:,0] = c1
+        L[:,1:,1] = c2
+        L[:,2:,2] = c3
+        L[:,3:,3] = c4
+
+        L_T = torch.zeros(x_2.shape[0],4,4)
+        L_T[:,0,:] = c1
+        L_T[:,1,1:] = c2
+        L_T[:,2,2:] = c3
+        L_T[:,3,3:] = c4
+
+        cov_matrix = torch.matmul(L, L_T)+EPSILON
+        return mu_hat.squeeze(), cov_matrix.squeeze()
+    
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            torch.nn.init.xavier_uniform(m.weight)
+            m.bias.data.fill_(0.01)
+
 
 def get_policy(policy_model: nn.Module, observation: torch.Tensor) -> torch.distributions:
-    logits = policy_model(observation)
-    action_probs = torch.distributions.Categorical(logits=logits)
+    mu_hat, cov_matrix = policy_model(observation)
+    action_probs = torch.distributions.MultivariateNormal(loc=mu_hat, covariance_matrix=cov_matrix)
     return action_probs
 
 def get_action(policy_model: nn.Module, observation: torch.Tensor) -> torch.Tensor:
-    return get_policy(policy_model, observation).sample().item()
+    return get_policy(policy_model, observation).sample()
 
 def compute_loss_value_model(value_estimates: torch.Tensor, rewards: torch.Tensor) -> torch.Tensor:
     return torch.square(value_estimates-rewards).mean()
 
 def compute_loss_policy_model(policy_model: nn.Module, value_estimates: nn.Module, observation: torch.Tensor, action: torch.Tensor, rewards: torch.Tensor) -> torch.Tensor:
     log_prob = get_policy(policy_model, observation).log_prob(action)
-    return -torch.matmul(log_prob, rewards-value_estimates) / BATCH_SIZE
+    return -torch.matmul(log_prob, rewards) / BATCH_SIZE
     #return -(log_prob * (rewards-value_estimates)).mean()
 
 def reward_to_go(trajectory_rewards: list) -> list:
@@ -69,12 +161,10 @@ def train(log: bool, device: str):
     else:
         device = "cpu"
 
-    env = gym.make("CartPole-v1")
+    env = gym.make("BipedalWalker-v3")
 
-    policy_model = MLP(
-        layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
-        activation_func=nn.Tanh,
-        output_activation_func=nn.Identity
+    policy_model = MultiHeadMLP_V2(
+        input_size=env.observation_space.shape[0]
     ).to(device)
     policy_optim = torch.optim.Adam(policy_model.parameters(), lr=LEARNING_RATE)
 
@@ -111,8 +201,9 @@ def train(log: bool, device: str):
             #t = 0
             while not done:
                 trajectory_obs.append(observation)
-                action = get_action(policy_model, torch.as_tensor(observation, dtype=torch.float32).to(device))
-                observation, reward, terminated, truncated, info = env.step(action)
+                action = get_action(policy_model, torch.as_tensor(observation, dtype=torch.float32)[None,:].to(device))
+                action_ = env.action_space.sample()
+                observation, reward, terminated, truncated, info = env.step(action.clone().detach().cpu().numpy())
 
                 trajectory_actions.append(action)
                 trajectory_rewards.append(reward)
@@ -191,12 +282,10 @@ def train(log: bool, device: str):
         wandb.finish()
 
 def evaluate(device: str):
-    env = gym.make("CartPole-v1", render_mode="human")
+    env = gym.make("BipedalWalker-v3", render_mode="human")
 
-    policy_model = MLP(
-        layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
-        activation_func=nn.Tanh,
-        output_activation_func=nn.Identity
+    policy_model = MultiHeadMLP(
+        input_size=env.observation_space.shape[0]
     ).to(device)
 
     policy_model.load_state_dict(torch.load(PATH_POLICY_MODEL, weights_only=True))
@@ -211,7 +300,7 @@ def evaluate(device: str):
     done = False
     while not done:
         action = get_action(policy_model, torch.as_tensor(observation, dtype=torch.float32).to(device))
-        observation, reward, terminated, truncated, info = env.step(action)
+        observation, reward, terminated, truncated, info = env.step(action.clone().detach().cpu().numpy())
 
         if terminated or truncated:
             done = True
@@ -227,8 +316,8 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats_1_correct.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats_1_correct.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_1.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_1.jpg")
     plt.show()
     
     # plot in separate figure because of different magnitude on y-axis
@@ -236,19 +325,19 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats_2_correct.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats_2_correct.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_2.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_2.jpg")
     plt.show()
 
 def record_agent(model: nn.Module, device: str):
-    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    env = gym.make("BipedalWalker-v3", render_mode="rgb_array")
     env = RecordVideo(env, video_folder=PATH+"/videos", name_prefix="eval")
 
     observation, info = env.reset(seed=SEED)
     done = False
     while not done:
         action = get_action(model, torch.as_tensor(observation, dtype=torch.float32).to(device))
-        observation, reward, terminated, truncated, info = env.step(action)
+        observation, reward, terminated, truncated, info = env.step(action.clone().detach().cpu().numpy())
 
         if terminated or truncated:
             done = True
@@ -262,7 +351,7 @@ if __name__ == "__main__":
         description='Solving the CartPole problem using vanilla policy gradient.'
     )
 
-    parser.add_argument('-t', '--task', type=str, default="eval")
+    parser.add_argument('-t', '--task', type=str, default="train")
     parser.add_argument('-l', '--log', type=lambda x: bool(strtobool(x)), default=False)
     parser.add_argument('-d', '--device', type=str, default="cpu")
     parser.add_argument('-n', '--name', type=str, default="nameless_run")
@@ -273,7 +362,7 @@ if __name__ == "__main__":
         # start a new wandb run to track this script
         wandb.init(
             # set the wandb project where this run will be logged
-            project="CartPole",
+            project="BipedalWalker",
             name=args.name,
             # track hyperparameters and run metadata
             config={

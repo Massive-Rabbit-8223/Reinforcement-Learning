@@ -13,13 +13,14 @@ from gymnasium.wrappers import RecordVideo
 
 
 PATH = os.path.dirname(os.path.abspath(__file__))
-NUM_EPOCHS = 80
+NUM_EPOCHS = 1000
 SEED = 42
-BATCH_SIZE = 5000
+BATCH_SIZE = 1000
 LEARNING_RATE = 1e-2
-PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model_correct.pth"
-PATH_VALUE_MODEL = PATH + "/training_statistics/value_model_correct.pth"
-PATH_METRICS = PATH + "/training_statistics/metrics_dict_correct.pkl"
+PATH_POLICY_MODEL = PATH + "/training_statistics/policy_model_wo_baseline_goal_reward_3.pth"
+PATH_VALUE_MODEL = PATH + "/training_statistics/value_model_wo_baseline_goal_reward_3.pth"
+PATH_METRICS = PATH + "/training_statistics/metrics_dict_wo_baseline_goal_reward_3.pkl"
+ENV = "MountainCar-v0"
 
 
 class MLP(nn.Module):
@@ -52,8 +53,8 @@ def compute_loss_value_model(value_estimates: torch.Tensor, rewards: torch.Tenso
 
 def compute_loss_policy_model(policy_model: nn.Module, value_estimates: nn.Module, observation: torch.Tensor, action: torch.Tensor, rewards: torch.Tensor) -> torch.Tensor:
     log_prob = get_policy(policy_model, observation).log_prob(action)
-    return -torch.matmul(log_prob, rewards-value_estimates) / BATCH_SIZE
-    #return -(log_prob * (rewards-value_estimates)).mean()
+    #return -torch.matmul(log_prob, rewards-value_estimates) / BATCH_SIZE
+    return -(log_prob * rewards).mean()
 
 def reward_to_go(trajectory_rewards: list) -> list:
     rtg = []
@@ -69,17 +70,17 @@ def train(log: bool, device: str):
     else:
         device = "cpu"
 
-    env = gym.make("CartPole-v1")
+    env = gym.make(ENV)
 
     policy_model = MLP(
-        layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
+        layer_sizes=[env.observation_space.shape[0], 128, env.action_space.n.item()],
         activation_func=nn.Tanh,
         output_activation_func=nn.Identity
     ).to(device)
     policy_optim = torch.optim.Adam(policy_model.parameters(), lr=LEARNING_RATE)
 
     value_model = MLP(
-        layer_sizes=[env.observation_space.shape[0], 32, 1],
+        layer_sizes=[env.observation_space.shape[0], 128, 1],
         activation_func=nn.Tanh,
         output_activation_func=nn.Identity
     ).to(device)
@@ -108,11 +109,17 @@ def train(log: bool, device: str):
             trajectory_rewards = []
             trajectory_obs = []
             trajectory_actions = []
-            #t = 0
+            t = 0
             while not done:
                 trajectory_obs.append(observation)
                 action = get_action(policy_model, torch.as_tensor(observation, dtype=torch.float32).to(device))
                 observation, reward, terminated, truncated, info = env.step(action)
+                
+                reward = observation[1]**2
+
+                if observation[0] >= 0.5:
+                    reward += 210-t
+                
 
                 trajectory_actions.append(action)
                 trajectory_rewards.append(reward)
@@ -121,7 +128,7 @@ def train(log: bool, device: str):
                     done = True
 
                 #time_step_list.append(t)
-                #t += 1
+                t += 1
 
             batch_lens.append(len(trajectory_rewards))
             batch_rewards_rtg += reward_to_go(trajectory_rewards)
@@ -191,10 +198,10 @@ def train(log: bool, device: str):
         wandb.finish()
 
 def evaluate(device: str):
-    env = gym.make("CartPole-v1", render_mode="human")
+    env = gym.make(ENV, render_mode="human")
 
     policy_model = MLP(
-        layer_sizes=[env.observation_space.shape[0], 32, env.action_space.n.item()],
+        layer_sizes=[env.observation_space.shape[0], 128, env.action_space.n.item()],
         activation_func=nn.Tanh,
         output_activation_func=nn.Identity
     ).to(device)
@@ -227,8 +234,8 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats_1_correct.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats_1_correct.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_1_3.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_1_3.jpg")
     plt.show()
     
     # plot in separate figure because of different magnitude on y-axis
@@ -236,12 +243,12 @@ def plot_metrics(epoch_loss_policy, epoch_loss_value, mean_epoch_reward, mean_ep
     plt.xlabel("# Epochs")
 
     plt.legend()
-    plt.savefig(PATH+"/plots"+"/training_stats_2_correct.pdf")
-    plt.savefig(PATH+"/plots"+"/training_stats_2_correct.jpg")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_3.pdf")
+    plt.savefig(PATH+"/plots"+"/training_stats_2_3.jpg")
     plt.show()
 
 def record_agent(model: nn.Module, device: str):
-    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    env = gym.make(ENV, render_mode="rgb_array")
     env = RecordVideo(env, video_folder=PATH+"/videos", name_prefix="eval")
 
     observation, info = env.reset(seed=SEED)
@@ -273,7 +280,7 @@ if __name__ == "__main__":
         # start a new wandb run to track this script
         wandb.init(
             # set the wandb project where this run will be logged
-            project="CartPole",
+            project="MountainCar",
             name=args.name,
             # track hyperparameters and run metadata
             config={
